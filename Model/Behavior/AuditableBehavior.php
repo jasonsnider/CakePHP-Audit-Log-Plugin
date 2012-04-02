@@ -245,6 +245,10 @@ class AuditableBehavior extends ModelBehavior {
       $source = $Model->currentUser();
     }
     
+    if( method_exists($Model, 'current_user') ) {
+      $source = $Model->current_user();
+    }
+    
     $audit = $this->_original;
     $data  = array(
       'Audit' => array(
