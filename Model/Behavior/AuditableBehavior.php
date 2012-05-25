@@ -9,9 +9,8 @@ class AuditableBehavior extends ModelBehavior {
    * to store this off so we can calculate the deltas after save.
    *
    * @var   Object
-   * @access  private
    */
-  private $_original = null;
+  private $_original = array();
 
   /**
    * Initiate behavior for the model using specified settings.
@@ -25,10 +24,10 @@ class AuditableBehavior extends ModelBehavior {
    *            the acting model and whose changes should be monitored
    *            with the model.
    *
-   * @param   object  $Model      Model using the behavior
+   * @param   Model  $Model      Model using the behavior
    * @param   array   $settings   Settings overrides.
    */
-  public function setup( $Model, $settings = array() ) {
+  public function setup( Model $Model, $settings = array() ) {
     if( !isset( $this->settings[$Model->alias] ) ) {
       $this->settings[$Model->alias] = array(
         'ignore' => array( 'created', 'updated', 'modified' ),
@@ -42,18 +41,18 @@ class AuditableBehavior extends ModelBehavior {
     }
     $this->settings[$Model->alias] = array_merge_recursive( $this->settings[$Model->alias], $settings );
 
-    /**
+    /*
      * Ensure that no HABTM models which are already auditable
      * snuck into the settings array. That would be bad. Same for
      * any model which isn't a HABTM association.
      */
-    foreach( $this->settings[$Model->alias]['habtm'] as $index => $Model_name ) {
+    foreach( $this->settings[$Model->alias]['habtm'] as $index => $model_name ) {
       /**
        * Note the "===" in the condition. The type check is important,
        * so don't change it just because it may look like a mistake.
        */
-      if( !array_key_exists( $model_name, $model->hasAndBelongsToMany ) || ( is_array($model->$model_name->actsAs) && array_search( 'Auditable', $model->$model_name->actsAs ) === true ) ) {
-        unset( $this->settings[$model->alias]['habtm'][$index] );
+      if( !array_key_exists( $model_name, $Model->hasAndBelongsToMany ) || ( is_array($Model->$model_name->actsAs) && array_search( 'Auditable', $Model->$model_name->actsAs ) === true ) ) {
+        unset( $this->settings[$Model->alias]['habtm'][$index] );
       }
     }
   }
@@ -62,13 +61,12 @@ class AuditableBehavior extends ModelBehavior {
    * Executed before a save() operation.
    *
    * @return  boolean
-   * @access  public
    */
-  public function beforeSave( $Model ) {
+  public function beforeSave( Model $Model ) {
     # If we're editing an existing object, save off a copy of
     # the object as it exists before any changes.
     if( !empty( $Model->id ) ) {
-      $this->_original = $this->_getModelData( $Model );
+      $this->_original[$Model->alias] = $this->_getModelData( $Model );
     }
     
     return true;
@@ -79,16 +77,16 @@ class AuditableBehavior extends ModelBehavior {
    *
    * @param 	$Model
    * @return	boolean
-   * @access	public
    */
-  public function beforeDelete( $Model, $cascade = true ) {
-    $this->_original = $Model->find(
+  public function beforeDelete( Model $Model, $cascade = true ) {
+    $original = $Model->find(
       'first',
       array(
         'contain'    => false,
         'conditions' => array( $Model->alias . '.' . $Model->primaryKey => $Model->id ),
       )
     );
+    $this->_original[$Model->alias] = $original[$Model->alias];
     
     return true;
   }
@@ -101,11 +99,11 @@ class AuditableBehavior extends ModelBehavior {
    *                    insertion. False otherwise.
    * @return  void
    */
-  public function afterSave( $Model, $created ) {
-    $audit = $this->_getModelData( $Model );
+  public function afterSave( Model $Model, $created ) {
+    $audit = array( $Model->alias => $this->_getModelData( $Model ) );
     $audit[$Model->alias][$Model->primaryKey] = $Model->id;
 
-    /**
+    /*
      * Create a runtime association with the Audit model and bind the
      * Audit model to its AuditDelta model.
      */
@@ -116,17 +114,15 @@ class AuditableBehavior extends ModelBehavior {
       array( 'hasMany' => array( 'AuditDelta' ) )
     );
     
-    /**
+    /*
      * If a currentUser() method exists in the model class (or, of
      * course, in a superclass) the call that method to pull all user
      * data. Assume than an id field exists.
      */
     $source = array();
-    if( method_exists( $Model, 'currentUser' ) ) {
+    if ( $Model->hasMethod( 'currentUser' ) ) {
       $source = $Model->currentUser();
-    }
-    
-    if( method_exists( $Model, 'current_user' ) ) {
+    } else if ( $Model->hasMethod( 'current_user' ) ) {
       $source = $Model->current_user();
     }
     
@@ -140,7 +136,7 @@ class AuditableBehavior extends ModelBehavior {
       )
     );
 
-    /**
+    /*
      * We have the audit_logs record, so let's collect the set of
      * records that we'll insert into the audit_log_deltas table.
      */
@@ -148,16 +144,17 @@ class AuditableBehavior extends ModelBehavior {
     foreach( $audit[$Model->alias] as $property => $value ) {
       $delta = array();
 
-      /**
+      /*
        * Ignore virtual fields (Cake 1.3+) and specified properties
        */
-      if( ( method_exists( $Model, 'isVirtualField' ) && $Model->isVirtualField( $property ) ) || in_array( $property, $this->settings[$Model->alias]['ignore'] )  ) {
+      if( ( $Model->hasMethod( 'isVirtualField' ) && $Model->isVirtualField( $property ) )
+          || in_array( $property, $this->settings[$Model->alias]['ignore'] )  ) {
         continue;
       }
 
       if( !$created ) {
         if( array_key_exists( $property, $this->_original[$Model->alias] ) && $this->_original[$Model->alias][$property] != $value ) {
-          /**
+          /*
            * If the property exists in the original _and_ the
            * value is different, store it.
            */
@@ -180,12 +177,12 @@ class AuditableBehavior extends ModelBehavior {
       $Model->Audit->save( $data );
 
       if( $created ) {
-        if( method_exists( $Model, 'afterAuditCreate' ) ) {
+        if( $Model->hasMethod( 'afterAuditCreate' ) ) {
           $Model->afterAuditCreate( $Model );
         }
       }
       else {
-        if( method_exists( $Model, 'afterAuditUpdate' ) ) {
+        if( $Model->hasMethod( 'afterAuditUpdate' ) ) {
           $Model->afterAuditUpdate( $Model, $this->_original, $updates, $Model->Audit->id );
         }
       }
@@ -199,7 +196,7 @@ class AuditableBehavior extends ModelBehavior {
         $Model->Audit->AuditDelta->create();
         $Model->Audit->AuditDelta->save( $delta );
 
-        if( !$created && method_exists( $Model, 'afterAuditProperty') ) {
+        if( !$created && $Model->hasMethod( 'afterAuditProperty' ) ) {
           $Model->afterAuditProperty(
             $Model,
             $delta['AuditDelta']['property_name'],
@@ -210,19 +207,19 @@ class AuditableBehavior extends ModelBehavior {
       }
     }
 
-    /**
+    /*
      * Destroy the runtime association with the Audit
      */
     $Model->unbindModel(
       array( 'hasMany' => array( 'Audit' ) )
     );
 
-    /**
+    /*
      * Unset the original object value so it's ready for the next
      * call.
      */
     if( isset( $this->_original ) ) {
-      $this->_original = null;
+      unset( $this->_original[$Model->alias] );
     }
     return true;    
   }
@@ -232,24 +229,22 @@ class AuditableBehavior extends ModelBehavior {
    *
    * @param 	$Model
    * @return	void
-   * @access	public
    */
-  public function afterDelete( $Model ) {
-    /**
+  public function afterDelete( Model $Model ) {
+    /*
      * If a currentUser() method exists in the model class (or, of
      * course, in a superclass) the call that method to pull all user
      * data. Assume than an id field exists.
      */
     $source = array();
-    if( method_exists( $Model, 'currentUser' ) ) {
+    if( $Model->hasMethod( 'currentUser' ) ) {
       $source = $Model->currentUser();
-    }
-    
-    if( method_exists($Model, 'current_user') ) {
+    } else if ( $Model->hasMethod( 'current_user' ) ) {
       $source = $Model->current_user();
     }
     
-    $audit = $this->_original;
+    $audit = array( $Model->alias => $this->_original[$Model->alias] );
+
     $data  = array(
       'Audit' => array(
         'event'       => 'DELETE',
@@ -277,15 +272,15 @@ class AuditableBehavior extends ModelBehavior {
    * @param   $Model
    * @return  array
    */
-  private function _getModelData( $Model ) {
-    /**
+  private function _getModelData( Model $Model ) {
+    /*
      * Retrieve the model data along with its appropriate HABTM
      * model data.
      */
     $data = $Model->find(
       'first',
       array(
-        'contain' => !empty( $this->settings[$Model->alias]['habtm']  )
+        'contain' => !empty( $this->settings[$Model->alias]['habtm'] )
           ? array_values( $this->settings[$Model->alias]['habtm'] )
           : array(),
         'conditions' => array( $Model->alias . '.' . $Model->primaryKey => $Model->id )
@@ -303,7 +298,7 @@ class AuditableBehavior extends ModelBehavior {
           '{n}.id',
           '{n}.id'
         );
-        /**
+        /*
          * Grab just the id values and sort those
          */
         $habtm_ids = array_values( $habtm_ids );
@@ -313,6 +308,6 @@ class AuditableBehavior extends ModelBehavior {
       }
     }
 
-    return $audit_data;
+    return $audit_data[$Model->alias];
   }
 }
