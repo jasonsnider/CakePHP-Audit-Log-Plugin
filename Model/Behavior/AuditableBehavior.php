@@ -1,4 +1,7 @@
 <?php
+/**
+ * Records changes made to an object during save operations.
+ */
 
 /**
  * Records changes made to an object during save operations.
@@ -76,6 +79,7 @@ class AuditableBehavior extends ModelBehavior {
    * Executed before a delete() operation.
    *
    * @param 	$Model
+   * @param     $cascade
    * @return	boolean
    */
   public function beforeDelete( Model $Model, $cascade = true ) {
