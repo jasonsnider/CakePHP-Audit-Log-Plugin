@@ -65,7 +65,7 @@ class AuditableBehavior extends ModelBehavior {
    *
    * @return  boolean
    */
-  public function beforeSave( Model $Model ) {
+  public function beforeSave( Model $Model, $options = array() ) {
     # If we're editing an existing object, save off a copy of
     # the object as it exists before any changes.
     if( !empty( $Model->id ) ) {
@@ -103,7 +103,7 @@ class AuditableBehavior extends ModelBehavior {
    *                    insertion. False otherwise.
    * @return  void
    */
-  public function afterSave( Model $Model, $created ) {
+  public function afterSave( Model $Model, $created , $options = array() ) {
     $audit = array( $Model->alias => $this->_getModelData( $Model ) );
     $audit[$Model->alias][$Model->primaryKey] = $Model->id;
 
@@ -136,7 +136,8 @@ class AuditableBehavior extends ModelBehavior {
         'model'     => $Model->alias,
         'entity_id' => $Model->id,
         'json_object' => json_encode( $audit ),
-        'source_id' => isset( $source['id'] ) ? $source['id'] : null
+        'source_id' => isset( $source['id'] ) ? $source['id'] : null,
+        'description' => isset( $source['description'] ) ? $source['description'] : null,
       )
     );
 
@@ -255,7 +256,8 @@ class AuditableBehavior extends ModelBehavior {
         'model'       => $Model->alias,
         'entity_id'   => $Model->id,
         'json_object' => json_encode( $audit ),
-        'source_id'   => isset( $source['id'] ) ? $source['id'] : null
+        'source_id'   => isset( $source['id'] ) ? $source['id'] : null,
+        'description' => isset( $source['description'] ) ? $source['description'] : null,
       )
     );
     
@@ -292,7 +294,7 @@ class AuditableBehavior extends ModelBehavior {
     );
 
     $audit_data = array(
-      $Model->alias => $data[$Model->alias]
+      $Model->alias => isset($data[$Model->alias]) ? $data[$Model->alias] : array()
     );
 
     foreach( $this->settings[$Model->alias]['habtm'] as $habtm_model ) {
